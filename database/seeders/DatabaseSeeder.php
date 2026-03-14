@@ -202,7 +202,7 @@ class DatabaseSeeder extends Seeder
                 'name'             => $p['name'],
                 'description'      => "Delicious {$p['name']} prepared fresh daily.",
                 'price'            => $p['price'],
-                'image_url'        => null,
+                'image_path'       => null,
                 'preparation_time' => $p['prep'],
                 'calories'         => $p['cal'],
                 'ingredients'      => json_encode($p['ingredients']), // MySQL stores as JSON

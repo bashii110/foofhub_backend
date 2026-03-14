@@ -12,29 +12,22 @@ class OrderItem extends Model
     protected $fillable = [
         'order_id',
         'product_id',
+        'product_name',
         'quantity',
         'price',
         'special_instructions',
     ];
 
     protected $casts = [
-        'price' => 'decimal:2',
+        'price'    => 'decimal:2',
         'quantity' => 'integer',
     ];
 
-    /**
-     * Get the order that owns the order item
-     */
-    public function order()
-    {
-        return $this->belongsTo(Order::class);
-    }
+    public function order()   { return $this->belongsTo(Order::class); }
+    public function product() { return $this->belongsTo(Product::class); }
 
-    /**
-     * Get the product for this order item
-     */
-    public function product()
+    public function getSubtotalAttribute(): float
     {
-        return $this->belongsTo(Product::class);
+        return round($this->price * $this->quantity, 2);
     }
 }
