@@ -19,21 +19,25 @@ class DatabaseSeeder extends Seeder
         // ═══════════════════════════════════════════════════════════
         // ADMIN & STAFF USERS
         // ═══════════════════════════════════════════════════════════
-        User::create([
-            'name'      => 'Admin',
-            'email'     => 'admin@foodhub.com',
-            'password'  => Hash::make('admin123'),
-            'role'      => 'admin',
-            'is_active' => true,
-        ]);
+        User::updateOrCreate(
+            ['email' => env('ADMIN_EMAIL')],
+            [
+                'name'      => 'Admin',
+                'password'  => Hash::make(env('ADMIN_PASSWORD')),
+                'role'      => 'admin',
+                'is_active' => true,
+            ]
+        );
 
-        User::create([
-            'name'      => 'Staff Member',
-            'email'     => 'staff@foodhub.com',
-            'password'  => Hash::make('staff123'),
-            'role'      => 'staff',
-            'is_active' => true,
-        ]);
+        User::updateOrCreate(
+            ['email' => env('STAFF_EMAIL')],
+            [
+                'name'      => 'Staff Member',
+                'password'  => Hash::make(env('STAFF_PASSWORD')),
+                'role'      => 'staff',
+                'is_active' => true,
+            ]
+        );
 
         // ═══════════════════════════════════════════════════════════
         // CATEGORIES
@@ -215,7 +219,7 @@ class DatabaseSeeder extends Seeder
         $this->command->info('✅ Created: 2 admin users, 6 categories, 14 products');
         $this->command->info('');
         $this->command->info('🔑 Login Credentials:');
-        $this->command->info('   Admin: admin@foodhub.com / admin123');
-        $this->command->info('   Staff: staff@foodhub.com / staff123');
+        $this->command->info('   Admin: ADMIN_EMAIL / ADMIN_PASSWORD');
+        $this->command->info('   Staff: STAFF_EMAIL / STAFF_PASSWORD');
     }
 }
