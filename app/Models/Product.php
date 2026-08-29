@@ -42,11 +42,13 @@ class Product extends Model
 
     // ── Accessors ──────────────────────────────────────────────────────
     public function getImageUrlAttribute(): ?string
-    {
-        return $this->image_path
-            ? Storage::url($this->image_path)
-            : null;
-    }
+{
+    if (!$this->image_path) return null;
+
+    // image_path is already "/storage/products/abc.jpg"
+    // Just return it as-is. Flutter will prepend the server origin.
+    return $this->image_path;
+}
 
     // ── Append custom attributes ───────────────────────────────────────
     protected $appends = ['image_url'];
