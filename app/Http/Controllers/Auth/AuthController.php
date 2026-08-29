@@ -14,10 +14,13 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-use Illuminate\Support\Facades\Password;
+use App\Models\PasswordResetOtp;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Exceptions\TokenExpiredException;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Mail\PasswordResetOtpMail;
+
+
 
 class AuthController extends Controller
 {
@@ -458,61 +461,240 @@ class AuthController extends Controller
         ]);
     }
 
+
     // ─────────────────────────────────────────────────────────────────
-    // Forgot Password
+    // Forgot Password — Send OTP
     // ─────────────────────────────────────────────────────────────────
 
-    public function forgotPassword(Request $request): JsonResponse
-    {
-        $request->validate([
-            'email' => 'required|email',
+public function forgotPassword(Request $request): JsonResponse
+{
+    Log::info('Forgot password request received', [
+        'email' => $request->email,
+    ]);
+
+    $request->validate([
+        'email' => 'required|email',
+    ]);
+
+    $user = User::where('email', $request->email)->first();
+
+    // Don't reveal whether the email exists
+    if (! $user) {
+        Log::info('Forgot password requested for unknown email', [
+            'email' => $request->email,
         ]);
-
-        Password::sendResetLink(
-            $request->only('email')
-        );
 
         return response()->json([
-            'message' => 'If that email is registered, a reset link has been sent.',
+            'message' => 'If that email is registered, a verification code has been sent.',
         ]);
     }
+
+    Log::info('User found for password reset', [
+        'user_id' => $user->id,
+        'email'   => $user->email,
+    ]);
+
+    // Invalidate previous reset OTPs
+    PasswordResetOtp::where('user_id', $user->id)
+        ->where('used', false)
+        ->update([
+            'used' => true,
+        ]);
+
+    // Generate 6-digit OTP
+    $otp = (string) random_int(100000, 999999);
+
+    Log::info('Password reset OTP generated', [
+        'user_id' => $user->id,
+        'email'   => $user->email,
+        // TEMPORARY - remove this in production
+        'otp'     => $otp,
+    ]);
+
+    // Store OTP
+    PasswordResetOtp::create([
+        'user_id'    => $user->id,
+        'email'      => $user->email,
+        'otp'        => $otp,
+        'expires_at' => now()->addMinutes(10),
+        'used'       => false,
+    ]);
+
+    Log::info('Password reset OTP stored', [
+        'user_id' => $user->id,
+    ]);
+
+    try {
+        Mail::to($user->email)
+            ->send(new PasswordResetOtpMail($otp));
+
+        Log::info('Password reset OTP email sent', [
+            'user_id' => $user->id,
+            'email'   => $user->email,
+        ]);
+
+    } catch (\Throwable $e) {
+
+        Log::error('Password reset OTP email failed', [
+            'user_id' => $user->id,
+            'email'   => $user->email,
+            'error'   => $e->getMessage(),
+        ]);
+
+        PasswordResetOtp::where('user_id', $user->id)
+            ->where('otp', $otp)
+            ->update([
+                'used' => true,
+            ]);
+    }
+
+    return response()->json([
+        'message' => 'If that email is registered, a verification code has been sent.',
+    ]);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// Verify Password Reset OTP
+// ─────────────────────────────────────────────────────────────────
+
+    public function verifyResetOtp(Request $request): JsonResponse
+{
+    $request->validate([
+        'email' => 'required|email',
+        'otp'   => 'required|digits:6',
+    ]);
+
+    $user = User::where('email', $request->email)->first();
+
+    if (! $user) {
+        return response()->json([
+            'message' => 'Invalid verification code.',
+        ], 422);
+    }
+
+    $otpCode = PasswordResetOtp::where('user_id', $user->id)
+        ->where('email', $user->email)
+        ->where('otp', $request->otp)
+        ->where('used', false)
+        ->latest()
+        ->first();
+
+    if (! $otpCode) {
+        return response()->json([
+            'message' => 'Invalid verification code.',
+        ], 422);
+    }
+
+    if ($otpCode->expires_at->isPast()) {
+        return response()->json([
+            'message' => 'Verification code has expired. Please request a new code.',
+        ], 422);
+    }
+
+    // Generate a secure temporary reset token
+    $resetToken = bin2hex(random_bytes(32));
+
+    // Mark OTP as used and store reset authorization
+    $otpCode->update([
+        'used'        => true,
+        'reset_token' => hash('sha256', $resetToken),
+        'verified_at' => now(),
+    ]);
+
+    Log::info('Password reset OTP verified', [
+        'user_id' => $user->id,
+        'email'   => $user->email,
+    ]);
+
+    return response()->json([
+        'message'    => 'OTP verified successfully.',
+        'email'      => $user->email,
+        'reset_token' => $resetToken,
+    ]);
+}
 
     // ─────────────────────────────────────────────────────────────────
     // Reset Password
     // ─────────────────────────────────────────────────────────────────
 
     public function resetPassword(Request $request): JsonResponse
-    {
-        $request->validate([
-            'token'    => 'required',
-            'email'    => 'required|email',
-            'password' => 'required|string|min:8|confirmed',
-        ]);
+{
+    $request->validate([
+        'email'                 => 'required|email',
+        'reset_token'           => 'required|string',
+        'password'              => [
+            'required',
+            'string',
+            'min:8',
+            'confirmed',
+            'regex:/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/',
+        ],
+    ], [
+        'password.regex' =>
+            'Password must contain at least one uppercase letter, one lowercase letter, and one number.',
+    ]);
 
-        $status = Password::reset(
-            $request->only(
-                'email',
-                'password',
-                'password_confirmation',
-                'token'
-            ),
-            function ($user, $password) {
-                $user->update([
-                    'password' => Hash::make($password),
-                ]);
-            }
-        );
+    $user = User::where('email', $request->email)->first();
 
-        if ($status !== Password::PASSWORD_RESET) {
-            return response()->json([
-                'message' => 'Invalid or expired reset token.',
-            ], 422);
-        }
-
+    if (! $user) {
         return response()->json([
-            'message' => 'Password reset successfully.',
-        ]);
+            'message' => 'Unable to reset password.',
+        ], 422);
     }
+
+    // Find the latest verified reset request
+    $resetOtp = PasswordResetOtp::where('user_id', $user->id)
+        ->where('email', $user->email)
+        ->where('verified_at', '!=', null)
+        ->where('used', true)
+        ->latest()
+        ->first();
+
+    if (! $resetOtp || ! $resetOtp->reset_token) {
+        return response()->json([
+            'message' => 'Invalid or expired password reset request.',
+        ], 422);
+    }
+
+    // Compare supplied token with hashed database token
+    if (! hash_equals(
+        $resetOtp->reset_token,
+        hash('sha256', $request->reset_token)
+    )) {
+        return response()->json([
+            'message' => 'Invalid or expired password reset token.',
+        ], 422);
+    }
+
+    // Optional: limit reset authorization lifetime
+    if (
+        $resetOtp->verified_at &&
+        $resetOtp->verified_at->addMinutes(15)->isPast()
+    ) {
+        return response()->json([
+            'message' => 'Password reset session has expired. Please request a new OTP.',
+        ], 422);
+    }
+
+    // Update password
+    $user->update([
+        'password' => Hash::make($request->password),
+    ]);
+
+    // Invalidate reset token permanently
+    $resetOtp->update([
+        'reset_token' => null,
+    ]);
+
+    Log::info('Password reset successfully', [
+        'user_id' => $user->id,
+        'email'   => $user->email,
+    ]);
+
+    return response()->json([
+        'message' => 'Password reset successfully.',
+    ]);
+}
 
     // ─────────────────────────────────────────────────────────────────
     // Update FCM Token
